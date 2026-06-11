@@ -3,6 +3,8 @@ package lingmaipc
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +61,44 @@ func TestNormalizeWebSocketURLAddsRootPath(t *testing.T) {
 	}
 	if got != "ws://127.0.0.1:36510/" {
 		t.Fatalf("unexpected normalized websocket url: %q", got)
+	}
+}
+
+func TestSharedClientInfoSearchBasesDarwinIncludesLingmaVSCodePath(t *testing.T) {
+	homeDir := "/Users/tester"
+	got := sharedClientInfoSearchBases("darwin", homeDir, "", "/Users/tester/Library/Application Support")
+	want := filepath.Join(homeDir, ".lingma", "vscode", "sharedClientCache")
+	if len(got) == 0 || got[0] != want {
+		t.Fatalf("expected first darwin search base %q, got %v", want, got)
+	}
+}
+
+func TestResolvePipePathNonWindowsReturnsExplicitError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("non-windows behavior only")
+	}
+	_, err := ResolvePipePath("")
+	if err == nil {
+		t.Fatal("expected pipe resolution to fail on non-windows")
+	}
+	if !strings.Contains(err.Error(), "requires Windows") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveDialOptionsAutoUsesWebSocketOnNonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("non-windows behavior only")
+	}
+	t.Setenv("LINGMA_PROXY_WS_URL", "ws://127.0.0.1:36510")
+	opts, err := ResolveDialOptions(TransportAuto, "", "")
+	if err != nil {
+		t.Fatalf("resolve auto transport: %v", err)
+	}
+	if opts.Transport != TransportWebSocket {
+		t.Fatalf("unexpected transport: %s", opts.Transport)
+	}
+	if opts.WebSocketURL != "ws://127.0.0.1:36510/" {
+		t.Fatalf("unexpected websocket url: %q", opts.WebSocketURL)
 	}
 }

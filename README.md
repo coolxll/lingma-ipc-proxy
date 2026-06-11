@@ -13,6 +13,7 @@ Current scope:
 - supports both non-streaming and streaming responses
 - one request at a time
 - supports Windows named-pipe transport and local websocket transport
+- on macOS, uses local websocket transport only
 - directly uses Lingma IPC, not DOM/CDP
 
 ## Run
@@ -21,6 +22,15 @@ Current scope:
 cd C:\Workspace\Personal\lingma-ipc-proxy
 go run .\cmd\lingma-ipc-proxy
 ```
+
+macOS example:
+
+```bash
+cd /Users/lynn/Workspace/lingma-ipc-proxy
+go run ./cmd/lingma-ipc-proxy --port 8095
+```
+
+On macOS, `--transport auto` resolves Lingma from `~/.lingma/vscode/sharedClientCache/.info` and connects over websocket. Named pipe transport is Windows-only.
 
 ## Config File
 
@@ -122,9 +132,18 @@ Run the built binary:
 .\dist\lingma-ipc-proxy.exe --transport websocket --ws-url ws://127.0.0.1:36510 --port 8095
 ```
 
+macOS direct run:
+
+```bash
+go build -o /tmp/lingma-ipc-proxy ./cmd/lingma-ipc-proxy
+/tmp/lingma-ipc-proxy --transport auto --port 8095
+```
+
 ## Windows Service
 
 For this project, the correct deployment shape is a native local process, not Docker. The proxy talks to Lingma over local pipe or websocket transport, so it should run on the same host as Lingma itself.
+
+Windows service scripts in this repo are Windows-only. macOS should run the proxy as a normal local process.
 
 ### NSSM
 
@@ -193,7 +212,9 @@ go run .\cmd\lingma-ipc-proxy --port 8095 --session-mode auto
 - `--host`
 - `--port`
 - `--transport`
-- `--pipe`
+  - `auto`: Windows prefers pipe discovery first, then websocket; macOS uses websocket discovery
+  - `--pipe`
+  - Windows only
 - `--ws-url`
 - `--cwd`
 - `--current-file-path`
@@ -218,6 +239,12 @@ go run .\cmd\lingma-ipc-proxy --port 8095 --session-mode auto
 - `LINGMA_PROXY_SHELL_TYPE`
 - `LINGMA_PROXY_SESSION_MODE`
 - `LINGMA_PROXY_TIMEOUT_SECONDS`
+
+## macOS Notes
+
+- macOS currently supports websocket transport only.
+- Auto discovery reads Lingma shared client info from `~/.lingma/vscode/sharedClientCache/.info` or `.info.json`.
+- `--ws-url` or `LINGMA_PROXY_WS_URL` still overrides auto discovery when you want to pin the endpoint explicitly.
 
 ## Examples
 

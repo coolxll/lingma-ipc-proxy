@@ -10,4 +10,7 @@ coverage.*
 .idea/
 .vscode/
 nul
-LINUXDO_POST.md
+.DS_STORE
+# Build artifacts
+lingma-ipc-proxy
+ws-probe

@@ -8,18 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	winio "github.com/Microsoft/go-winio"
 	"github.com/gorilla/websocket"
 )
 
@@ -74,16 +71,24 @@ func ResolveDialOptions(transport Transport, explicitPipe string, explicitWebSoc
 			return DialOptions{Transport: TransportWebSocket, WebSocketURL: wsURL}, nil
 		}
 
-		pipePath, pipeErr := ResolvePipePath(explicitPipe)
-		if pipeErr == nil {
-			return DialOptions{Transport: TransportPipe, PipePath: pipePath}, nil
+		if runtime.GOOS == "windows" {
+			pipePath, pipeErr := ResolvePipePath(explicitPipe)
+			if pipeErr == nil {
+				return DialOptions{Transport: TransportPipe, PipePath: pipePath}, nil
+			}
+
+			wsURL, wsErr := ResolveWebSocketURL(explicitWebSocketURL)
+			if wsErr == nil {
+				return DialOptions{Transport: TransportWebSocket, WebSocketURL: wsURL}, nil
+			}
+			return DialOptions{}, fmt.Errorf("resolve Lingma transport automatically: pipe: %w; websocket: %v", pipeErr, wsErr)
 		}
 
-		wsURL, wsErr := ResolveWebSocketURL(explicitWebSocketURL)
-		if wsErr == nil {
-			return DialOptions{Transport: TransportWebSocket, WebSocketURL: wsURL}, nil
+		wsURL, err := ResolveWebSocketURL(explicitWebSocketURL)
+		if err != nil {
+			return DialOptions{}, fmt.Errorf("resolve Lingma transport automatically on %s: websocket: %w", runtime.GOOS, err)
 		}
-		return DialOptions{}, fmt.Errorf("resolve Lingma transport automatically: pipe: %w; websocket: %v", pipeErr, wsErr)
+		return DialOptions{Transport: TransportWebSocket, WebSocketURL: wsURL}, nil
 	case TransportPipe:
 		pipePath, err := ResolvePipePath(explicitPipe)
 		if err != nil {
@@ -99,42 +104,6 @@ func ResolveDialOptions(transport Transport, explicitPipe string, explicitWebSoc
 	default:
 		return DialOptions{}, fmt.Errorf("unsupported Lingma transport %q", transport)
 	}
-}
-
-func ResolvePipePath(explicit string) (string, error) {
-	if runtime.GOOS != "windows" {
-		return "", errors.New("Lingma pipe transport currently requires Windows")
-	}
-
-	if pipe := strings.TrimSpace(explicit); pipe != "" {
-		return normalizePipePath(pipe), nil
-	}
-	if pipe := strings.TrimSpace(os.Getenv("LINGMA_IPC_PIPE")); pipe != "" {
-		return normalizePipePath(pipe), nil
-	}
-	if info, err := resolveSharedClientInfo(); err == nil {
-		if pipe := strings.TrimSpace(info.IPCServerPath); pipe != "" {
-			return normalizePipePath(pipe), nil
-		}
-	}
-
-	entries, err := os.ReadDir(PipeDir)
-	if err != nil {
-		return "", fmt.Errorf("enumerate Lingma named pipes: %w", err)
-	}
-
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, PipePrefix) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return "", errors.New("no active Lingma named pipe was found")
-	}
-	return PipeDir + names[len(names)-1], nil
 }
 
 func ResolveWebSocketURL(explicit string) (string, error) {
@@ -189,18 +158,16 @@ func resolveSharedClientInfo() (sharedClientInfo, error) {
 }
 
 func defaultSharedClientInfoPaths() []string {
-	bases := make([]string, 0, 2)
-	if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
-		bases = append(bases, appData)
-	}
-	if userConfigDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(userConfigDir) != "" {
-		bases = append(bases, userConfigDir)
-	}
-
+	homeDir, _ := os.UserHomeDir()
+	userConfigDir, _ := os.UserConfigDir()
+	bases := sharedClientInfoSearchBases(runtime.GOOS, homeDir, os.Getenv("APPDATA"), userConfigDir)
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, len(bases)*2)
 	for _, base := range bases {
-		cacheDir := filepath.Join(base, "Lingma", "SharedClientCache")
+		cacheDir := strings.TrimSpace(base)
+		if cacheDir == "" {
+			continue
+		}
 		for _, name := range []string{".info.json", ".info"} {
 			path := filepath.Join(cacheDir, name)
 			if _, ok := seen[path]; ok {
@@ -211,6 +178,37 @@ func defaultSharedClientInfoPaths() []string {
 		}
 	}
 	return paths
+}
+
+func sharedClientInfoSearchBases(goos string, homeDir string, appData string, userConfigDir string) []string {
+	var bases []string
+	switch goos {
+	case "windows":
+		if appData = strings.TrimSpace(appData); appData != "" {
+			bases = append(bases, filepath.Join(appData, "Lingma", "SharedClientCache"))
+		}
+		if userConfigDir = strings.TrimSpace(userConfigDir); userConfigDir != "" {
+			bases = append(bases, filepath.Join(userConfigDir, "Lingma", "SharedClientCache"))
+		}
+	default:
+		if homeDir = strings.TrimSpace(homeDir); homeDir != "" {
+			bases = append(bases, filepath.Join(homeDir, ".lingma", "vscode", "sharedClientCache"))
+		}
+		if userConfigDir = strings.TrimSpace(userConfigDir); userConfigDir != "" {
+			bases = append(bases, filepath.Join(userConfigDir, "Lingma", "SharedClientCache"))
+		}
+	}
+
+	seen := make(map[string]struct{}, len(bases))
+	deduped := make([]string, 0, len(bases))
+	for _, base := range bases {
+		if _, ok := seen[base]; ok {
+			continue
+		}
+		seen[base] = struct{}{}
+		deduped = append(deduped, base)
+	}
+	return deduped
 }
 
 func resolveSharedClientInfoFromPaths(paths []string) (sharedClientInfo, error) {
@@ -305,51 +303,6 @@ func connectTransport(ctx context.Context, opts DialOptions) (framedTransport, e
 	default:
 		return nil, fmt.Errorf("unsupported Lingma transport %q", opts.Transport)
 	}
-}
-
-type pipeTransport struct {
-	path   string
-	conn   net.Conn
-	reader *framedReader
-	write  sync.Mutex
-}
-
-func connectPipeTransport(ctx context.Context, pipePath string) (*pipeTransport, error) {
-	conn, err := winio.DialPipeContext(ctx, pipePath)
-	if err != nil {
-		return nil, fmt.Errorf("connect Lingma IPC pipe %s: %w", pipePath, err)
-	}
-	return &pipeTransport{
-		path:   pipePath,
-		conn:   conn,
-		reader: newFramedReader(conn),
-	}, nil
-}
-
-func (t *pipeTransport) ReadFrame() ([]byte, error) {
-	return t.reader.ReadFrame()
-}
-
-func (t *pipeTransport) WriteFrame(body []byte) error {
-	t.write.Lock()
-	defer t.write.Unlock()
-
-	frame := []byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body)))
-	if _, err := t.conn.Write(frame); err != nil {
-		return fmt.Errorf("write frame header: %w", err)
-	}
-	if _, err := t.conn.Write(body); err != nil {
-		return fmt.Errorf("write frame body: %w", err)
-	}
-	return nil
-}
-
-func (t *pipeTransport) Close() error {
-	return t.conn.Close()
-}
-
-func (t *pipeTransport) Address() string {
-	return t.path
 }
 
 type websocketTransport struct {

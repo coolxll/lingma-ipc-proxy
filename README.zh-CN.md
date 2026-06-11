@@ -13,6 +13,7 @@
 - 支持非流式与流式响应
 - 单次只处理一个请求
 - 支持 Windows named pipe 传输，也支持本地 websocket 传输
+- 在 macOS 上只使用本地 websocket 传输
 - 直接走 Lingma IPC，不依赖 DOM/CDP
 
 ## 运行
@@ -21,6 +22,15 @@
 cd C:\Workspace\Personal\lingma-ipc-proxy
 go run .\cmd\lingma-ipc-proxy
 ```
+
+macOS 示例：
+
+```bash
+cd /Users/lynn/Workspace/lingma-ipc-proxy
+go run ./cmd/lingma-ipc-proxy --port 8095
+```
+
+在 macOS 上，`--transport auto` 会从 `~/.lingma/vscode/sharedClientCache/.info` 自动发现 Lingma，并通过 websocket 连接。named pipe 仍然只支持 Windows。
 
 ## 配置文件
 
@@ -122,9 +132,18 @@ go build -trimpath -ldflags "-s -w" -o .\dist\lingma-ipc-proxy.exe .\cmd\lingma-
 .\dist\lingma-ipc-proxy.exe --transport websocket --ws-url ws://127.0.0.1:36510 --port 8095
 ```
 
+macOS 直接运行：
+
+```bash
+go build -o /tmp/lingma-ipc-proxy ./cmd/lingma-ipc-proxy
+/tmp/lingma-ipc-proxy --transport auto --port 8095
+```
+
 ## Windows 服务
 
 这个项目正确的部署形态是本机进程，不是 Docker。原因很直接：代理需要通过本地 pipe 或 websocket 与 Lingma 通信，所以必须和 Lingma 跑在同一台主机上。
+
+仓库里的服务安装脚本只面向 Windows。macOS 建议直接以前台或守护进程方式运行代理。
 
 ### NSSM
 
@@ -193,7 +212,10 @@ go run .\cmd\lingma-ipc-proxy --port 8095 --session-mode auto
 - `--host`
 - `--port`
 - `--transport`
+- `--transport`
+  - `auto`：Windows 侧优先尝试 pipe，再回退 websocket；macOS 侧走 websocket 自动发现
 - `--pipe`
+  - 仅 Windows 可用
 - `--ws-url`
 - `--cwd`
 - `--current-file-path`
@@ -218,6 +240,12 @@ go run .\cmd\lingma-ipc-proxy --port 8095 --session-mode auto
 - `LINGMA_PROXY_SHELL_TYPE`
 - `LINGMA_PROXY_SESSION_MODE`
 - `LINGMA_PROXY_TIMEOUT_SECONDS`
+
+## macOS 说明
+
+- macOS 当前只支持 websocket 传输。
+- 自动发现会读取 `~/.lingma/vscode/sharedClientCache/.info` 或 `.info.json`。
+- 如果想固定地址，依然可以显式传 `--ws-url` 或设置 `LINGMA_PROXY_WS_URL`。
 
 ## 示例
 
