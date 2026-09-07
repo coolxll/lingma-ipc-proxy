@@ -26,7 +26,7 @@ go run .\cmd\lingma-ipc-proxy
 macOS example:
 
 ```bash
-cd /Users/lynn/Workspace/lingma-ipc-proxy
+cd /Users/lynn/workspace/projects/lingma-ipc-proxy
 go run ./cmd/lingma-ipc-proxy --port 8095
 ```
 
